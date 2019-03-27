@@ -22,6 +22,7 @@
 import sympy as sp
 import logging
 import copy
+import z3
 import re
 from pycparser import c_ast
 from pycparser.c_generator import CGenerator
@@ -31,6 +32,24 @@ from shadowdp.exceptions import *
 logger = logging.getLogger(__name__)
 
 _code_generator = CGenerator()
+
+
+class _Z3ShadowChecker(NodeVisitor):
+    """ this class checks if shadow execution will diverge"""
+    def __init__(self, types, query_var, is_one_differ):
+        self._types = types
+        self._query_var = query_var
+        self._is_one_differ = is_one_differ
+        self._precondition = []
+
+    def visit(self, node):
+        original, shadow = super().visit(node)
+        solver = z3.Solver()
+        solver.add(z3.Implies(z3.And(self._precondition), (original == shadow)))
+        return solver.check() == z3.unsat
+
+    def visit_BinaryOp(self, node):
+        pass
 
 
 class _ExpressionFinder(NodeVisitor):
@@ -235,6 +254,7 @@ class ShadowDPTransformer(NodeVisitor):
             lambda node: (isinstance(node, c_ast.ID) and
                           ('__SHADOWDP_' in types.get_distance(node.name)[1] or
                            types.get_distance(node.name)[1] == '*')))
+        checker = _Z3ShadowChecker(types, self._parameters[2], self._one_differ)
         return pc or len(star_variable_finder.visit(condition)) != 0
 
     # Instrumentation rule
